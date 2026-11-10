@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>When a strict AI agent rule traps the agent: interactive demo</title>
+<meta name="description" content="Play an AI agent under a no-simulation protocol. Block a tool and watch the protocol deadlock, then add the escape hatch and watch it recover.">
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1f;--mut:#555560;--card:#f4f5f8;--line:#d5d7de;--acc:#1d4ed8;--onacc:#fff;--good:#0a6b3a;--warn:#8a5a00;--bad:#b42318}
+@media(prefers-color-scheme:dark){:root{--bg:#14151a;--fg:#ececf1;--mut:#a4a6b3;--card:#1e2028;--line:#383b47;--acc:#8ab4ff;--onacc:#0b1020;--good:#5fd391;--warn:#f0b64d;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+main,header{max-width:860px;margin:0 auto;padding:0 16px}
+header{padding-top:20px}
+a{color:var(--acc)}
+h1{font-size:1.6rem;line-height:1.25;margin:.4rem 0}
+h2{font-size:1.2rem;margin:0 0 .4rem}
+.lead{color:var(--mut);margin:.2rem 0 1rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+button{font:inherit;min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:0 14px;cursor:pointer}
+button[aria-pressed=true]{background:var(--acc);color:var(--onacc);border-color:var(--acc)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.tool{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;border:2px solid var(--line);border-radius:10px;margin:8px 0;background:var(--bg)}
+.tool.sel{border-color:var(--acc)}
+.tool .name{flex:1 1 140px;font-weight:600;text-align:left;border:0;background:none;padding:0 4px}
+.states{display:flex;gap:6px;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.node{border:2px solid var(--line);border-radius:10px;padding:8px;background:var(--bg);font-size:.95rem}
+.node b{display:block;font-family:ui-monospace,Consolas,monospace}
+.node.cur{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc)}
+.node.dead{border-color:var(--bad)}
+.node.dead.cur{box-shadow:0 0 0 3px var(--bad)}
+.out{border-left:6px solid var(--line);padding:8px 12px;margin:8px 0;background:var(--bg);border-radius:6px}
+.out.bad{border-color:var(--bad)}.out.good{border-color:var(--good)}.out.warn{border-color:var(--warn)}
+.bad-t{color:var(--bad);font-weight:700}.good-t{color:var(--good);font-weight:700}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left}
+.sr{position:absolute;left:-9999px}
+input[type=range]{width:100%;min-height:44px}
+.mut{color:var(--mut)}
+footer{padding:8px 16px 40px;max-width:860px;margin:0 auto;color:var(--mut)}
+</style>
+</head>
+<body>
+<header>
+<h1>When a strict rule traps the AI agent</h1>
+<p class="lead">Imagine a rule for an AI agent: "always use the real tool, and never fake a result." Sounds safe. But what if the tool exists and is switched off right now? Try it below: you play the agent.</p>
+</header>
+<main>
+<section class="card" aria-labelledby="h-rule">
+<h2 id="h-rule">1. Pick the rulebook</h2>
+<div class="row" role="group" aria-label="Protocol variant">
+<button id="v-zero" aria-pressed="true">Zero-tolerance (the paper's flawed rule)</button>
+<button id="v-esc" aria-pressed="false">With escape hatch (the paper's repair)</button>
+</div>
+<p id="rule-text" class="mut"></p>
+</section>
+
+<section class="card" aria-labelledby="h-task">
+<h2 id="h-task">2. The task and its tools</h2>
+<p class="mut">Task: "Book a trip." Tap a tool's name to inspect it. Set each tool as <b>working</b> (available and allowed), <b>blocked</b> (it exists, but a rate limit or policy stops the call), or <b>missing</b> (not in the toolbox). Untick "needed" if the task does not use it.</p>
+<div id="tools"></div>
+<div class="row"><button id="ctx">Simulate a rate limit hitting the selected tool</button></div>
+</section>
+
+<section class="card" aria-labelledby="h-sm">
+<h2 id="h-sm">3. The state machine</h2>
+<p class="mut">Each box is a state written (needed, exists, allowed). The paper's trouble spot is <b>D = (1,1,0)</b>: needed, exists, but not allowed right now. The box with the thick outline is where the selected tool is.</p>
+<div id="grid" class="grid" role="list"></div>
+<p class="mut" id="flow"></p>
+</section>
+
+<section class="card" aria-live="polite" aria-labelledby="h-play">
+<h2 id="h-play">4. Your move as the agent</h2>
+<table aria-label="Which actions the rulebook allows"><thead><tr><th>Action</th><th>Allowed by the rulebook?</th></tr></thead><tbody id="acts"></tbody></table>
+<div id="verdict"></div>
+<h3 style="font-size:1rem;margin:12px 0 4px">Whole task</h3>
+<div id="task"></div>
+</section>
+
+<section class="card" aria-labelledby="h-exp">
+<h2 id="h-exp">5. How often could this bite?</h2>
+<p class="mut">The paper's projection: if each gated call has a <b id="qv">10%</b> chance of being blocked and a task makes <b id="nv">5</b> such calls, the chance that at least one is blocked is <b id="pv"></b>.</p>
+<label for="q">Chance a call is blocked</label><input id="q" type="range" min="1" max="50" value="10">
+<label for="n">Gated calls per task</label><input id="n" type="range" min="1" max="12" value="5">
+</section>
+
+<section class="card" aria-labelledby="h-caveat">
+<h2 id="h-caveat">What this does not show</h2>
+<ul>
+<li>It does not test a real AI model. It runs the paper's rule table, so it shows what the rules allow, not what any model does.</li>
+<li>The 10% and 5-call numbers are the paper's assumptions, not measurements of any platform. Exposure is not the same as an actual deadlock rate.</li>
+<li>Real systems may already have retries or escalation that hide this trap. The paper's proposed experiment has not been run.</li>
+</ul>
+</section>
+</main>
+<footer>
+<p>Companion to the paper <a href="https://papers.qnfo.org/papers/specification-induced-deadlock-in-zero-tolerance-agent-protocols-a-state-machine">Specification-Induced Deadlock in Zero-Tolerance Agent Protocols</a>. Toy model of the paper's analysis, not peer reviewed. Runs entirely in your browser; no tracking. MIT licence.</p>
+</footer>
+<script>
+/*MACHINE-START*/
+var Machine=(function(){
+  // State = (r,c,i): r task needs the tool, c tool exists, i invocation allowed now.
+  var LABELS=['invoke','refrain','halt'];
+  function compliant(s,label,variant){
+    if(label==='invoke')return !!(s.c&&s.i);
+    if(label==='refrain')return variant==='escape'?!!(!s.r||!s.c||!s.i):!!(!s.r||!s.c);
+    return false; // halt is never compliant
+  }
+  function allowed(s,variant){return LABELS.filter(function(l){return compliant(s,l,variant);});}
+  function isDeadlock(s,variant){return allowed(s,variant).length===0;}
+  function isD(s){return s.r===1&&s.c===1&&s.i===0;}
+  function fromTool(needed,status){ // status: working | blocked | missing
+    return {r:needed?1:0,c:status==='missing'?0:1,i:status==='working'?1:0};
+  }
+  function key(s){return '('+s.r+','+s.c+','+s.i+')';}
+  function contextEvent(s){return {r:s.r,c:s.c,i:0};} // rate limit etc. flips i 1->0
+  function taskOutcome(tools,variant){
+    var dead=null,skipped=[];
+    for(var k=0;k<tools.length;k++){
+      var s=fromTool(tools[k].needed,tools[k].status);
+      if(isDeadlock(s,variant)){dead=tools[k].name;break;}
+      if(s.r&&!compliant(s,'invoke',variant))skipped.push(tools[k].name);
+    }
+    return {deadlock:dead,skipped:skipped};
+  }
+  function exposure(q,n){return 1-Math.pow(1-q,n);}
+  return {compliant:compliant,allowed:allowed,isDeadlock:isDeadlock,isD:isD,fromTool:fromTool,key:key,contextEvent:contextEvent,taskOutcome:taskOutcome,exposure:exposure};
+})();
+/*MACHINE-END*/
+if(typeof document!=='undefined'){(function(){
+var $=function(id){return document.getElementById(id);};
+var variant='zero',sel=0;
+var tools=[{name:'Flight search',needed:true,status:'working'},{name:'Payment',needed:true,status:'working'},{name:'Email confirmation',needed:true,status:'working'}];
+var SL={working:'Working',blocked:'Blocked',missing:'Missing'};
+function bind(id,fn){$(id).addEventListener('click',fn);}
+function setVariant(v){variant=v;$('v-zero').setAttribute('aria-pressed',v==='zero');$('v-esc').setAttribute('aria-pressed',v==='escape');render();}
+function renderTools(){
+  var h='';tools.forEach(function(t,k){
+    h+='<div class="tool'+(k===sel?' sel':'')+'"><button class="name" data-sel="'+k+'" aria-label="Inspect '+t.name+'">'+t.name+'</button>';
+    h+='<label style="min-height:44px;display:flex;align-items:center;gap:6px"><input type="checkbox" data-need="'+k+'"'+(t.needed?' checked':'')+' style="width:24px;height:24px"> needed</label><div class="states" role="group" aria-label="'+t.name+' status">';
+    ['working','blocked','missing'].forEach(function(s){h+='<button data-k="'+k+'" data-s="'+s+'" aria-pressed="'+(t.status===s)+'">'+SL[s]+'</button>';});
+    h+='</div></div>';});
+  $('tools').innerHTML=h;
+  $('tools').querySelectorAll('[data-sel]').forEach(function(b){b.onclick=function(){sel=+b.dataset.sel;render();};});
+  $('tools').querySelectorAll('[data-s]').forEach(function(b){b.onclick=function(){tools[+b.dataset.k].status=b.dataset.s;sel=+b.dataset.k;render();};});
+  $('tools').querySelectorAll('[data-need]').forEach(function(b){b.onchange=function(){tools[+b.dataset.need].needed=b.checked;sel=+b.dataset.need;render();};});
+}
+function render(){
+  $('rule-text').textContent=variant==='zero'
+   ?'Rule: if the task needs a tool you must use it live (Z1), and you must never fake output (Z2). Skipping a needed, existing tool counts as a violation, and so does halting.'
+   :'Same rule, plus one extra state: "tool exists but is not allowed right now". In that state you may skip it and report why. Halting is still never compliant.';
+  renderTools();
+  var t=tools[sel],s=Machine.fromTool(t.needed,t.status);
+  var g='';
+  for(var r=0;r<2;r++)for(var c=0;c<2;c++)for(var i=0;i<2;i++){
+    if(c===0&&i===1)continue; // excluded by the paper's assumption A1
+    var st={r:r,c:c,i:i},cur=Machine.key(st)===Machine.key(s),dead=Machine.isDeadlock(st,variant);
+    var al=Machine.allowed(st,variant);
+    g+='<div class="node'+(cur?' cur':'')+(dead?' dead':'')+'" role="listitem"><b>'+Machine.key(st)+(Machine.isD(st)?' = D':'')+'</b>'+(cur?'<span class="sr">current state: </span>':'')+(al.length?'can: '+al.join(', '):'<span class="bad-t">no allowed action: deadlock</span>')+'</div>';
+  }
+  $('grid').innerHTML=g;
+  $('flow').textContent='Normal operation is (1,1,1). One context event (a rate limit, policy switch or spent budget) moves it to (1,1,0). States where the tool is missing but "allowed" are left out, as in the paper (assumption A1).';
+  var a='';['invoke','refrain','halt'].forEach(function(l){
+    var ok=Machine.compliant(s,l,variant);
+    a+='<tr><td>'+({invoke:'Call the tool',refrain:'Skip it (report the situation)',halt:'Stop and give up'})[l]+'</td><td class="'+(ok?'good-t':'bad-t')+'">'+(ok?'Yes':'No')+'</td></tr>';});
+  $('acts').innerHTML=a;
+  var dl=Machine.isDeadlock(s,variant),v;
+  if(dl)v='<div class="out bad"><b>Deadlock.</b> '+t.name+' is '+Machine.key(s)+'. Calling it would be fake output (it cannot run live), skipping it breaks "use it", and halting is never allowed. Every move is a violation, so the agent is stuck.</div>';
+  else if(!s.r)v='<div class="out good">'+t.name+' is not needed, so you can skip it. No trouble.</div>';
+  else if(s.c&&s.i)v='<div class="out good">Tool works: call it live. No trouble.</div>';
+  else if(!s.c)v='<div class="out warn">Tool is missing, so skipping and reporting is allowed. The agent can say so and carry on.</div>';
+  else v='<div class="out good"><b>Can recover.</b> The escape hatch lets the agent skip the blocked tool and report it instead of freezing.</div>';
+  $('verdict').innerHTML=v;
+  var o=Machine.taskOutcome(tools,variant);
+  $('task').innerHTML=o.deadlock?'<div class="out bad"><b>Task stuck:</b> the agent deadlocks at "'+o.deadlock+'" and delivers nothing.</div>':'<div class="out good"><b>Task can finish.</b>'+(o.skipped.length?' Reported and skipped: '+o.skipped.join(', ')+'.':' All needed tools ran live.')+'</div>';
+  var q=+$('q').value/100,n=+$('n').value;
+  $('qv').textContent=Math.round(q*100)+'%';$('nv').textContent=n;$('pv').textContent=(Machine.exposure(q,n)*100).toFixed(1)+'%';
+}
+bind('v-zero',function(){setVariant('zero');});bind('v-esc',function(){setVariant('escape');});
+bind('ctx',function(){if(tools[sel].status==='working')tools[sel].status='blocked';render();});
+$('q').oninput=render;$('n').oninput=render;
+render();
+})();}
+</script>
+</body>
+</html>
